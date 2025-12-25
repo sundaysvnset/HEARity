@@ -1,10 +1,10 @@
 import streamlit as st
 
-# Background color and theme
+# Background color and gradient theme (white with slight blue sky)
 st.markdown("""
     <style>
         body {
-            background-color: #f0f8ff;
+            background: linear-gradient(to bottom, #ffffff, #e6f7ff); /* White to light sky blue */
             color: #333;
         }
         .title {
@@ -24,10 +24,18 @@ st.markdown("""
             color: white;
             border-radius: 5px;
         }
+        .img-container {
+            text-align: center;
+            margin-top: 30px;
+        }
     </style>
 """, unsafe_allow_html=True)
 
-# Judul
+# Developer Image (Logo/Banner)
+# Upload the image to display on top (this image should be hosted somewhere or you can use a URL)
+st.image("https://drive.google.com/file/d/1AfIQ7ItNMbXoHv8S5uO8S5wepnxnEvbC/view?usp=sharing", width=300)  # Replace with your image URL or local path
+
+# Title of the app
 st.title("HEARity: Speech-to-Text Summarization Berbasis Generative AI untuk Meningkatkan Aksesibilitas bagi Penyandang Gangguan Pendengaran", anchor="title")
 
 # Deskripsi Aplikasi
