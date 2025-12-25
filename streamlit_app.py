@@ -24,16 +24,14 @@ st.markdown("""
             color: white;
             border-radius: 5px;
         }
-        .img-container {
-            text-align: center;
-            margin-top: 30px;
-        }
     </style>
 """, unsafe_allow_html=True)
 
-# Developer Image (Logo/Banner)
-# Upload the image to display on top (this image should be hosted somewhere or you can use a URL)
-st.image("https://drive.google.com/file/d/1AfIQ7ItNMbXoHv8S5uO8S5wepnxnEvbC/view?usp=sharing", width=300)  # Replace with your image URL or local path
+# Image from Google Drive (Developer's logo/banner)
+image_url = "https://drive.google.com/uc?id=1AfIQ7ItNMbXoHv8S5uO8S5wepnxnEvbC"  # Replace with your file ID
+
+# Display the image at the top
+st.image(image_url, width=300)
 
 # Title of the app
 st.title("HEARity: Speech-to-Text Summarization Berbasis Generative AI untuk Meningkatkan Aksesibilitas bagi Penyandang Gangguan Pendengaran", anchor="title")
