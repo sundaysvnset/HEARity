@@ -9,3 +9,6 @@ librosa
 soundfile
 google-genai
 yt-dlp
+ffmpeg-python
+google-generativeai
+accelerate
