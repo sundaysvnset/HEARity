@@ -7,6 +7,7 @@ import librosa
 from transformers import WhisperProcessor, WhisperForConditionalGeneration
 from google import genai
 from google.genai import types
+import getpass
 
 # =========================
 # CONFIG
@@ -15,7 +16,7 @@ MODEL_PATH = "models/whisper-medium-finetuned-id"  # Path to model folder in Git
 LANG = "id"  # Language code for Indonesian
 
 # =========================
-# CACHED LOADERS (for efficiency)
+# CACHED LOADERS 
 # =========================
 @st.cache_resource
 def load_whisper(model_id: str):
@@ -26,7 +27,10 @@ def load_whisper(model_id: str):
 
 @st.cache_resource
 def gemini_client():
-    return genai.Client(api_key=st.secrets["GEMINI_API_KEY"])
+    # Ensure GEMINI_API_KEY is provided via environment or Streamlit secrets
+    gemini_api_key = st.secrets["GEMINI_API_KEY"] if "GEMINI_API_KEY" in st.secrets else getpass.getpass("Masukkan Gemini API Key: ")
+    os.environ["GEMINI_API_KEY"] = gemini_api_key
+    return genai.Client(api_key=gemini_api_key)
 
 # =========================
 # HELPERS
@@ -79,23 +83,32 @@ def whisper_transcribe(wav_path: str, processor, model) -> str:
 
 def gemini_summarize(text: str) -> str:
     client = gemini_client()
-    model_name = st.secrets.get("GEMINI_MODEL", "gemini-2.0-flash-001")
+    model_name = st.secrets.get("GEMINI_MODEL", "gemini-2.5-flash")  # Default model
 
-    prompt = (
-        "Buat ringkasan dalam Bahasa Indonesia dari transkrip berikut.\n"
-        "Buat 5–8 poin bullet yang jelas, singkat, dan mudah dipahami.\n\n"
-        f"{text}"
-    )
+    prompt = f"""
+    Ringkas materi berikut dalam bentuk BULLET POINTS yang komprehensif.
 
-    resp = client.models.generate_content(
+    Aturan:
+    - Tangkap alur pembahasan dari awal sampai akhir
+    - Sertakan semua konsep dan topik penting yang muncul
+    - Jelaskan definisi, klasifikasi, dan perbedaan konsep utama jika ada
+    - Sertakan tujuan, alasan pentingnya topik, dan implikasinya
+    - Gunakan Bahasa Indonesia yang rapi, netral, dan akademik
+    - Jangan menyalin kalimat mentah
+    - Maksimal 10–12 bullet points
+    - Jangan gunakan notasi LaTeX (seperti \\to, \\infty, $...$)
+    - Gunakan simbol Unicode matematika jika diperlukan (contoh: →, ∞, ≤, ≥)
+
+    MATERI:
+    {text}
+    """
+
+    # Call Gemini model to summarize the text
+    response = client.models.generate_content(
         model=model_name,
-        contents=prompt,
-        config=types.GenerateContentConfig(
-            temperature=0.2,
-            max_output_tokens=450
-        ),
+        contents=prompt
     )
-    return (resp.text or "").strip()
+    return response.text.strip()
 
 
 # =========================
@@ -105,7 +118,7 @@ processor, whisper_model = load_whisper(MODEL_PATH)
 
 
 # =========================
-# UI (SAMA seperti yang kamu minta)
+# UI 
 # =========================
 st.title("HEARity: Speech-to-Text Summarization Berbasis Generative AI", anchor="title")
 
