@@ -7,23 +7,22 @@ import librosa
 
 from transformers import WhisperProcessor, WhisperForConditionalGeneration
 from google import genai
-from google.genai import types
 
-# ==================================================
+# =========================
 # CONFIG
-# ==================================================
+# =========================
 MODEL_ID = "jovangelo/whispermodelproyek"
 LANG = "id"
-DEVICE = "cpu"  # Streamlit Cloud = CPU only (safe)
+DEVICE = "cpu"
 
-# ==================================================
-# CACHED LOADERS
-# ==================================================
-@st.cache_resource(show_spinner="📦 Loading Whisper model...")
-def load_whisper(model_id: str):
-    processor = WhisperProcessor.from_pretrained(model_id)
+# =========================
+# LOAD MODELS (CACHED)
+# =========================
+@st.cache_resource(show_spinner="📦 Memuat model Whisper...")
+def load_whisper():
+    processor = WhisperProcessor.from_pretrained(MODEL_ID)
     model = WhisperForConditionalGeneration.from_pretrained(
-        model_id,
+        MODEL_ID,
         torch_dtype=torch.float32,
         low_cpu_mem_usage=True
     )
@@ -36,27 +35,23 @@ def load_whisper(model_id: str):
 def load_gemini():
     return genai.Client(api_key=st.secrets["GEMINI_API_KEY"])
 
-# ==================================================
+
+processor, whisper_model = load_whisper()
+
+# =========================
 # AUDIO HELPERS
-# ==================================================
-def save_uploaded_file(uploaded_file) -> str:
+# =========================
+def save_upload_to_tmp(uploaded_file):
     suffix = os.path.splitext(uploaded_file.name)[1]
     with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
         tmp.write(uploaded_file.read())
         return tmp.name
 
 
-def convert_to_wav16k(input_path: str) -> str:
+def run_ffmpeg_to_wav16k(input_path):
     out_path = input_path + "_16k.wav"
     subprocess.run(
-        [
-            "ffmpeg", "-y",
-            "-i", input_path,
-            "-vn",
-            "-ac", "1",
-            "-ar", "16000",
-            out_path
-        ],
+        ["ffmpeg", "-y", "-i", input_path, "-ac", "1", "-ar", "16000", out_path],
         check=True,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL
@@ -64,7 +59,7 @@ def convert_to_wav16k(input_path: str) -> str:
     return out_path
 
 
-def download_youtube_audio(url: str) -> str:
+def download_youtube_audio(url):
     tmpdir = tempfile.mkdtemp()
     outtmpl = os.path.join(tmpdir, "audio.%(ext)s")
 
@@ -75,16 +70,13 @@ def download_youtube_audio(url: str) -> str:
         stderr=subprocess.DEVNULL
     )
 
-    files = os.listdir(tmpdir)
-    if not files:
-        raise RuntimeError("Failed to download YouTube audio.")
+    filename = os.listdir(tmpdir)[0]
+    return run_ffmpeg_to_wav16k(os.path.join(tmpdir, filename))
 
-    return convert_to_wav16k(os.path.join(tmpdir, files[0]))
-
-# ==================================================
+# =========================
 # WHISPER TRANSCRIPTION
-# ==================================================
-def whisper_transcribe(wav_path: str, processor, model) -> str:
+# =========================
+def whisper_transcribe(wav_path):
     audio, _ = librosa.load(wav_path, sr=16000)
 
     inputs = processor(
@@ -99,134 +91,143 @@ def whisper_transcribe(wav_path: str, processor, model) -> str:
     )
 
     with torch.no_grad():
-        predicted_ids = model.generate(
+        pred_ids = whisper_model.generate(
             **inputs,
             forced_decoder_ids=forced_ids,
             max_new_tokens=448
         )
 
     return processor.batch_decode(
-        predicted_ids,
+        pred_ids,
         skip_special_tokens=True
-    )[0].strip()
+    )[0]
 
-# ==================================================
+# =========================
 # GEMINI SUMMARIZATION
-# ==================================================
-def gemini_summarize(text: str) -> str:
+# =========================
+def gemini_summarize(full_text):
     client = load_gemini()
-    model_name = st.secrets.get(
-        "GEMINI_MODEL",
-        "gemini-2.0-flash-001"
-    )
 
     prompt = f"""
-Buat ringkasan dalam Bahasa Indonesia dari transkrip berikut.
-Gunakan 5–8 poin bullet yang singkat, jelas, dan mudah dipahami.
+Ringkas materi berikut dalam bentuk BULLET POINTS yang komprehensif.
 
-Transkrip:
-{text}
+Aturan:
+- Tangkap alur pembahasan dari awal sampai akhir
+- Sertakan semua konsep dan topik penting yang muncul
+- Jelaskan definisi, klasifikasi, dan perbedaan konsep utama jika ada
+- Sertakan tujuan, alasan pentingnya topik, dan implikasinya
+- Gunakan Bahasa Indonesia yang rapi, netral, dan akademik
+- Jangan menyalin kalimat mentah
+- Maksimal 10–12 bullet points
+- Jangan gunakan notasi LaTeX
+- Gunakan simbol Unicode matematika jika diperlukan
+
+MATERI:
+{full_text}
 """
 
     response = client.models.generate_content(
-        model=model_name,
-        contents=prompt,
-        config=types.GenerateContentConfig(
-            temperature=0.2,
-            max_output_tokens=400
-        ),
+        model="models/gemini-2.5-flash",
+        contents=prompt
     )
 
-    return (response.text or "").strip()
+    return response.text.strip()
 
-# ==================================================
-# LOAD MODELS (ONCE)
-# ==================================================
-processor, whisper_model = load_whisper(MODEL_ID)
+# =========================
+# UI
+# =========================
+st.set_page_config(page_title="HEARity", page_icon="🎧")
 
-# ==================================================
-# STREAMLIT UI
-# ==================================================
-st.set_page_config(
-    page_title="HEARity",
-    page_icon="🎧",
-    layout="centered"
+st.title(
+    "HEARity: Speech-to-Text Summarization Berbasis Generative AI",
+    anchor="title"
 )
 
-st.title("🎧 HEARity")
-st.markdown("""
-**Speech-to-Text & Summarization berbasis AI**  
-Menggunakan Whisper (finetuned Bahasa Indonesia) dan Gemini.
+st.write("""
+Penyandang gangguan pendengaran seringkali mengalami kesulitan untuk memahami percakapan,
+perkuliahan, atau informasi berbasis suara lainnya.
+
+Walaupun saat ini sudah ada teknologi speech recognition, hasil transkrip sering kali sangat panjang
+dan sulit dipahami. Oleh karena itu, **HEARity** dikembangkan untuk mengubah suara menjadi teks
+dan menghasilkan ringkasan otomatis.
+
+**Final Project** ini bertujuan meningkatkan aksesibilitas komunikasi dan pendidikan
+bagi penyandang gangguan pendengaran.
 """)
 
-st.write("### Upload Audio / Video atau Masukkan URL YouTube")
+st.write("### Pilih File Audio/Video atau URL Video untuk Diproses")
 
 uploaded_file = st.file_uploader(
-    "Upload file (.wav, .mp3, .mp4, .mkv)",
-    type=["wav", "mp3", "mp4", "mkv"]
+    "Pilih file audio/video",
+    type=["mp3", "mp4", "wav", "mkv"]
 )
 
-video_url = st.text_input("Atau masukkan URL YouTube")
+st.write("Atau, masukkan URL video (misalnya YouTube)")
+video_url = st.text_input("Masukkan URL Video (opsional)")
 
 if "transcript" not in st.session_state:
     st.session_state.transcript = ""
 if "summary" not in st.session_state:
     st.session_state.summary = ""
 
-if st.button("🚀 Proses", type="primary"):
-    if not uploaded_file and not video_url:
-        st.warning("Silakan upload file atau masukkan URL.")
+process_btn = st.button(
+    "Proses Transkripsi & Ringkasan",
+    type="primary"
+)
+
+if process_btn:
+    if uploaded_file is None and not video_url:
+        st.warning("Silakan upload file atau masukkan URL terlebih dahulu.")
         st.stop()
 
     try:
-        with st.spinner("🎵 Menyiapkan audio..."):
+        with st.spinner("Menyiapkan audio..."):
             if uploaded_file:
-                raw_path = save_uploaded_file(uploaded_file)
-                wav_path = convert_to_wav16k(raw_path)
+                input_path = save_upload_to_tmp(uploaded_file)
+                wav_path = run_ffmpeg_to_wav16k(input_path)
             else:
                 wav_path = download_youtube_audio(video_url)
 
-        with st.spinner("📝 Transkripsi (Whisper)..."):
-            st.session_state.transcript = whisper_transcribe(
-                wav_path,
-                processor,
-                whisper_model
-            )
+        with st.spinner("Melakukan transkripsi (Whisper finetuned)..."):
+            transcript = whisper_transcribe(wav_path)
 
-        with st.spinner("🧠 Ringkasan (Gemini)..."):
-            st.session_state.summary = gemini_summarize(
-                st.session_state.transcript
-            )
+        with st.spinner("Membuat ringkasan (Gemini)..."):
+            summary = gemini_summarize(transcript)
 
-        st.success("✅ Selesai!")
+        st.session_state.transcript = transcript
+        st.session_state.summary = summary
+
+        st.success("Selesai! Transkrip dan ringkasan tersedia.")
 
     except Exception as e:
-        st.error(f"❌ Error: {e}")
+        st.error(f"Gagal memproses: {e}")
 
-st.subheader("📝 Transkrip")
+st.write("### Transkrip:")
 st.text_area(
-    "",
-    st.session_state.transcript,
-    height=220
+    "Transkrip",
+    value=st.session_state.transcript or "Transkrip akan ditampilkan di sini.",
+    height=200
 )
 
-st.subheader("🧠 Ringkasan")
+st.write("### Ringkasan:")
 st.text_area(
-    "",
-    st.session_state.summary,
-    height=220
+    "Ringkasan",
+    value=st.session_state.summary or "Ringkasan akan ditampilkan di sini.",
+    height=200
 )
 
 st.download_button(
-    "⬇️ Download Transkrip",
+    "Unduh Transkrip",
     st.session_state.transcript,
     "transcript.txt",
-    mime="text/plain"
+    mime="text/plain",
+    use_container_width=True
 )
 
 st.download_button(
-    "⬇️ Download Ringkasan",
+    "Unduh Ringkasan",
     st.session_state.summary,
     "summary.txt",
-    mime="text/plain"
+    mime="text/plain",
+    use_container_width=True
 )
