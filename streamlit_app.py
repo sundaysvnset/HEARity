@@ -12,7 +12,7 @@ from google.genai import types
 # ==================================================
 # CONFIG
 # ==================================================
-MODEL_ID = "fiishofii/whisper-medium-finetuned-id"
+MODEL_ID = "jovangelo/whispermodelproyek"
 LANG = "id"
 DEVICE = "cpu"  # Streamlit Cloud = CPU only (safe)
 
