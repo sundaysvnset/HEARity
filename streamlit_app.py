@@ -166,62 +166,130 @@ MATERI:
 # =========================
 # UI
 # =========================
-st.set_page_config(page_title="HEARity", page_icon="🎧")
-
-st.title("🎧 HEARity — Speech-to-Text & Summarization")
-
-uploaded_file = st.file_uploader(
-    "Upload audio/video",
-    type=["mp3", "wav", "mp4", "mkv", "m4a"]
+st.set_page_config(
+    page_title="HEARity",
+    page_icon="🎧",
+    layout="centered"
 )
 
-video_url = st.text_input("Atau masukkan URL YouTube")
+# ===== HEADER =====
+st.title("🎧 HEARity")
+st.caption(
+    "Speech-to-Text & Automatic Summarization berbasis Whisper + Generative AI"
+)
 
-process_btn = st.button("🚀 Proses", type="primary")
+st.markdown("""
+Penyandang gangguan pendengaran seringkali mengalami kesulitan memahami percakapan,
+perkuliahan, atau informasi berbasis audio.
 
+Walaupun teknologi *speech recognition* sudah tersedia, hasil transkrip sering kali
+panjang dan sulit dipahami. Oleh karena itu, **HEARity** dikembangkan untuk:
+- Mengubah audio/video menjadi teks (Speech-to-Text)
+- Menghasilkan ringkasan otomatis yang ringkas dan informatif
+
+🎓 **Final Project – Biomedical Engineering**
+""")
+
+st.divider()
+
+# ===== INPUT SECTION =====
+st.subheader("📥 Input Audio / Video")
+
+uploaded_file = st.file_uploader(
+    "Unggah file audio atau video",
+    type=["mp3", "mp4", "wav", "mkv", "m4a"],
+    help="Format audio/video yang didukung: mp3, mp4, wav, mkv, m4a"
+)
+
+st.markdown("**Atau**")
+
+video_url = st.text_input(
+    "Masukkan URL video (misalnya YouTube)",
+    placeholder="https://www.youtube.com/..."
+)
+
+# ===== SESSION STATE INIT =====
 if "transcript" not in st.session_state:
     st.session_state.transcript = ""
+
 if "summary" not in st.session_state:
     st.session_state.summary = ""
 
+st.divider()
+
+# ===== PROCESS BUTTON =====
+process_btn = st.button(
+    "🚀 Proses Transkripsi & Ringkasan",
+    type="primary",
+    use_container_width=True
+)
+
 if process_btn:
-    if not uploaded_file and not video_url:
-        st.warning("Upload file atau masukkan URL.")
+    if uploaded_file is None and not video_url:
+        st.warning("⚠️ Silakan unggah file atau masukkan URL video terlebih dahulu.")
         st.stop()
 
     try:
-        with st.spinner("🎧 Menyiapkan audio..."):
+        with st.spinner("🎵 Menyiapkan audio..."):
             if uploaded_file:
-                raw_path = save_upload_to_tmp(uploaded_file)
-                wav_path = run_ffmpeg_to_wav16k(raw_path)
+                input_path = save_upload_to_tmp(uploaded_file)
+                wav_path = run_ffmpeg_to_wav16k(input_path)
             else:
                 wav_path = download_youtube_audio(video_url)
 
-        with st.spinner("🧠 Transkripsi (Whisper Finetuned)..."):
+        with st.spinner("🧠 Melakukan transkripsi (Whisper finetuned)..."):
             transcript = whisper_transcribe(wav_path)
 
-        with st.spinner("✍️ Ringkasan (Gemini)..."):
+        with st.spinner("✍️ Membuat ringkasan (Gemini)..."):
             summary = gemini_summarize(transcript)
 
         st.session_state.transcript = transcript
         st.session_state.summary = summary
 
-        st.success("✅ Selesai!")
+        st.success("✅ Proses selesai! Hasil tersedia di bawah.")
 
     except Exception as e:
-        st.error(f"Gagal memproses: {e}")
+        st.error(f"❌ Gagal memproses: {e}")
 
-st.subheader("📄 Transkrip")
-st.text_area("", st.session_state.transcript, height=200)
+st.divider()
 
-st.subheader("📝 Ringkasan")
-st.text_area("", st.session_state.summary, height=200)
-
-st.download_button(
-    "⬇️ Unduh Transkrip",
-    st.session_state.transcript,
-    "transcript.txt"
+# ===== OUTPUT SECTION =====
+st.subheader("📄 Hasil Transkripsi")
+st.text_area(
+    label="Transkrip",
+    value=st.session_state.transcript or "Transkrip akan ditampilkan di sini.",
+    height=220,
+    key="transcript_box"
 )
+
+st.subheader("📝 Ringkasan Otomatis")
+st.text_area(
+    label="Ringkasan",
+    value=st.session_state.summary or "Ringkasan akan ditampilkan di sini.",
+    height=220,
+    key="summary_box"
+)
+
+# ===== DOWNLOAD BUTTONS =====
+col1, col2 = st.columns(2)
+
+with col1:
+    st.download_button(
+        "⬇️ Unduh Transkrip",
+        st.session_state.transcript,
+        "transcript.txt",
+        mime="text/plain",
+        use_container_width=True
+    )
+
+with col2:
+    st.download_button(
+        "⬇️ Unduh Ringkasan",
+        st.session_state.summary,
+        "summary.txt",
+        mime="text/plain",
+        use_container_width=True
+    )
 
 st.download_button(
     "⬇️ Unduh Ringkasan",
