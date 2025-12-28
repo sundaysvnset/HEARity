@@ -114,7 +114,7 @@ def whisper_transcribe(wav_path):
             pred_ids = whisper_model.generate(
                 **inputs,
                 forced_decoder_ids=forced_ids,
-                max_new_tokens=448
+                max_new_tokens=400
             )
 
         transcription = processor.batch_decode(
