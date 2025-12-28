@@ -181,29 +181,32 @@ MATERI:
 # =========================
 # UI
 # =========================
-st.set_page_config(
-    page_title="HEARity",
-    page_icon="🎧",
-    layout="centered"
+# =====================
+# BAGIAN HEADER / JUDUL
+# =====================
+st.markdown(
+    """
+    <div style="padding:30px 10px;">
+        <h1>🎧 HEARity</h1>
+        <p style="color:#b0b0b0;">
+             Konversi Suara ke Teks & Ringkasan Otomatis dengan Whisper + AI Generatif
+        </p>
+        <ul>
+            <li>Mengubah file audio atau video menjadi teks tertulis</li>
+            <li>Membuat ringkasan materi pembelajaran secara otomatis</li>
+        </ul>
+        <b>Kelompok 8 – Proyek Akhir</b>
+    </div>
+    """,
+    unsafe_allow_html=True
 )
-
-st.title("🎧 HEARity")
-st.caption("Speech-to-Text & Automatic Summarization berbasis Whisper + Generative AI")
-
-st.markdown("""
-HEARity membantu penyandang gangguan pendengaran untuk:
-- Mengubah audio/video menjadi teks
-- Menghasilkan ringkasan otomatis yang mudah dipahami
-
-🎓 **Final Project – Biomedical Engineering**
-""")
 
 st.divider()
 
-# INPUT
-uploaded_file = st.file_uploader(
-    "📥 Unggah file audio / video",
-    type=["mp3", "wav", "mp4", "mkv", "m4a"]
+# 1. UPLOADER FILE
+file_diunggah = st.file_uploader(
+    "📤 Unggah file audio atau video",
+    type=["wav", "mp3", "mp4", "m4a", "mkv"]
 )
 
 # SESSION STATE
@@ -221,10 +224,10 @@ if st.button("🚀 Proses", type="primary", use_container_width=True):
             input_path = save_upload_to_tmp(uploaded_file)
             wav_path = run_ffmpeg_to_wav16k(input_path)
 
-        with st.spinner("🧠 Transkripsi dengan Whisper..."):
+        with st.spinner("🔊 Sedang mengubah suara menjadi teks..."):
             transcript = whisper_transcribe(wav_path)
 
-        with st.spinner("✍️ Membuat ringkasan..."):
+        with st.spinner("🏻 Sedang membuat ringkasan..."):
             summary = gemini_summarize(transcript)
 
         st.session_state.transcript = transcript
