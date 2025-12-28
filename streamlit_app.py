@@ -11,189 +11,186 @@ from transformers import WhisperProcessor, WhisperForConditionalGeneration
 from google import genai
 
 # =========================
-# CONFIG
+# KONFIGURASI
 # =========================
 MODEL_ID = "jovangelo/whispermodelproyek"
-LANG = "id"
-DEVICE = "cpu"
+BAHASA = "id"
+PERANGKAT = "cuda" if torch.cuda.is_available() else "cpu"
 
-SAMPLE_RATE = 16000
-CHUNK_DURATION = 20        # seconds (AMAN & CEPAT)
-MAX_NEW_TOKENS = 200       # JANGAN > 200
+SAMPEL_RATE = 16000
 
 # =========================
-# LOAD MODELS
+# MUAT MODEL
 # =========================
 @st.cache_resource(show_spinner="📦 Memuat model Whisper...")
-def load_whisper():
-    processor = WhisperProcessor.from_pretrained(MODEL_ID)
+def muat_whisper():
+    prosesor = WhisperProcessor.from_pretrained(MODEL_ID)
     model = WhisperForConditionalGeneration.from_pretrained(
         MODEL_ID,
-        dtype=torch.float32,
+        torch_dtype=torch.float16 if torch.cuda.is_available() else torch.float32,
         low_cpu_mem_usage=True
     )
-    model.to(DEVICE)
+    model.to(PERANGKAT)
     model.eval()
-    return processor, model
+    return prosesor, model
 
 
 @st.cache_resource(show_spinner="📦 Memuat Gemini...")
-def load_gemini():
+def muat_gemini():
     if "GEMINI_API_KEY" not in st.secrets:
         raise RuntimeError("GEMINI_API_KEY belum diset di Secrets")
     return genai.Client(api_key=st.secrets["GEMINI_API_KEY"])
 
 
-processor, whisper_model = load_whisper()
+prosesor, model_whisper = muat_whisper()
 
 # =========================
-# AUDIO HELPERS
+# BANTUAN AUDIO
 # =========================
-def save_upload_to_tmp(uploaded_file):
-    suffix = os.path.splitext(uploaded_file.name)[1]
-    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
-        tmp.write(uploaded_file.read())
-        return tmp.name
+def simpan_unggahan_ke_sementara(file_diunggah):
+    ekstensi = os.path.splitext(file_diunggah.name)[1]
+    with tempfile.NamedTemporaryFile(delete=False, suffix=ekstensi) as sementara:
+        sementara.write(file_diunggah.read())
+        return sementara.name
 
 
-def run_ffmpeg_to_wav16k(input_path):
-    out_path = input_path + "_16k.wav"
+def jalankan_ffmpeg_ke_wav16k(jalur_input):
+    jalur_keluaran = jalur_input + "_16k.wav"
     subprocess.run(
         [
             "ffmpeg", "-y",
-            "-i", input_path,
+            "-i", jalur_input,
             "-ac", "1",
             "-ar", "16000",
-            out_path
+            jalur_keluaran
         ],
         check=True,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL
     )
-    return out_path
+    return jalur_keluaran
 
 
 # =========================
-# AUDIO CHUNKING
+# PEMBERSIH TRANSCRIPT OTOMATIS
 # =========================
-def split_audio(audio, sr=SAMPLE_RATE, chunk_duration=CHUNK_DURATION):
-    chunk_size = int(chunk_duration * sr)
-    return [
-        audio[i:i + chunk_size]
-        for i in range(0, len(audio), chunk_size)
-    ]
+def bersihkan_transkrip(teks: str) -> str:
+    teks = teks.lower()
 
-
-# =========================
-# TRANSCRIPT AUTO CLEAN
-# =========================
-def clean_transcript(text: str) -> str:
-    text = text.lower()
-
-    # hapus filler umum
-    fillers = [
+    # hapus kata pengisi umum
+    kata_pengisi = [
         r"\buh+\b", r"\bum+\b", r"\beh+\b", r"\bhmm+\b",
         r"\banu\b", r"\bgitu\b", r"\bjadi\b"
     ]
-    for f in fillers:
-        text = re.sub(f, "", text)
+    for pengisi in kata_pengisi:
+        teks = re.sub(pengisi, "", teks)
 
     # hapus pengulangan kata berturut-turut
-    text = re.sub(r"\b(\w+)( \1\b)+", r"\1", text)
+    teks = re.sub(r"\b(\w+)( \1\b)+", r"\1", teks)
 
     # rapikan spasi
-    text = re.sub(r"\s+", " ", text)
+    teks = re.sub(r"\s+", " ", teks)
 
-    return text.strip()
+    return teks.strip()
 
 
 # =========================
-# WHISPER TRANSCRIPTION
+# TRANSCRIPT WHISPER (TANPA CHUNKING)
 # =========================
-def whisper_transcribe(wav_path):
-    audio, _ = librosa.load(wav_path, sr=SAMPLE_RATE)
-    chunks = split_audio(audio)
-
-    forced_ids = processor.get_decoder_prompt_ids(
-        language=LANG,
+def whisper_transkrip(jalur_wav):
+    # Muat audio lengkap
+    audio, _ = librosa.load(jalur_wav, sr=SAMPEL_RATE)
+    
+    # Hitung durasi audio
+    durasi = len(audio) / SAMPEL_RATE
+    st.info(f"📊 Durasi audio: {durasi:.2f} detik")
+    
+    # Siapkan input untuk Whisper (tanpa chunking)
+    input_features = prosesor(
+        audio,
+        sampling_rate=SAMPEL_RATE,
+        return_tensors="pt"
+    ).input_features
+    
+    # Generate transcript
+    dengan_torch = torch.no_grad()
+    
+    # Buat prompt untuk bahasa Indonesia
+    prompt_ids = prosesor.get_decoder_prompt_ids(
+        language=BAHASA,
         task="transcribe"
     )
-
-    results = []
-
-    for chunk in chunks:
-        if len(chunk) < SAMPLE_RATE * 2:
-            continue
-
-        inputs = processor(
-            chunk,
-            sampling_rate=SAMPLE_RATE,
-            return_tensors="pt"
+    
+    dengan_torch.__enter__()
+    try:
+        pred_ids = model_whisper.generate(
+            input_features=input_features.to(PERANGKAT),
+            forced_decoder_ids=prompt_ids,
+            max_new_tokens=500,  # Cukup untuk 5-10 menit
+            do_sample=False
         )
-
-        with torch.no_grad():
-            pred_ids = whisper_model.generate(
-                input_features=inputs.input_features.to(DEVICE),
-                forced_decoder_ids=forced_ids,
-                max_new_tokens=MAX_NEW_TOKENS,
-                do_sample=False
-            )
-
-        text = processor.batch_decode(
-            pred_ids,
-            skip_special_tokens=True
-        )[0]
-
-        results.append(text)
-
-    raw_text = " ".join(results)
-    return clean_transcript(raw_text)
+    finally:
+        dengan_torch.__exit__(None, None, None)
+    
+    teks_mentah = prosesor.batch_decode(
+        pred_ids,
+        skip_special_tokens=True
+    )[0]
+    
+    return bersihkan_transkrip(teks_mentah)
 
 
 # =========================
-# GEMINI SUMMARIZATION
+# RINGKASAN GEMINI
 # =========================
-def gemini_summarize(full_text):
-    client = load_gemini()
+def gemini_ringkasan(teks_lengkap):
+    klien = muat_gemini()
 
     prompt = f"""
-Ringkas materi berikut dalam bentuk BULLET POINTS yang komprehensif.
+Buat ringkasan dari materi berikut dengan format BULLET POINTS.
 
-Aturan:
+Panduan:
 - Tangkap alur pembahasan dari awal sampai akhir
 - Sertakan konsep utama dan penjelasan penting
-- Gunakan Bahasa Indonesia akademik & jelas
-- Jangan menyalin kalimat mentah
-- Maksimal 10–12 bullet points
+- Gunakan Bahasa Indonesia yang jelas dan ringkas
+- Jangan menyalin kalimat asli secara mentah
+- Maksimal 8-10 bullet points
 
 MATERI:
-{full_text}
+{teks_lengkap}
 """
 
-    response = client.models.generate_content(
-        model="models/gemini-2.5-flash",
+    respon = klien.models.generate_content(
+        model="models/gemini-1.5-flash",
         contents=prompt
     )
 
-    return response.text.strip()
+    return respon.text.strip()
 
 
 # =========================
-# UI
+# ANTARMUKA PENGGUNA
 # =========================
+st.set_page_config(
+    page_title="HEARity - Transkripsi & Ringkasan",
+    page_icon="🎧",
+    layout="centered"
+)
+
 # =====================
 # BAGIAN HEADER / JUDUL
 # =====================
 st.markdown(
     """
-    <div style="padding:30px 10px;">
+    <div style="padding:20px 10px;">
         <h1>🎧 HEARity</h1>
         <p style="color:#b0b0b0;">
-             Konversi Suara ke Teks & Ringkasan Otomatis dengan Whisper + AI Generatif
+             Konversi Suara ke Teks & Ringkasan Otomatis
         </p>
         <ul>
-            <li>Mengubah file audio atau video menjadi teks tertulis</li>
-            <li>Membuat ringkasan materi pembelajaran secara otomatis</li>
+            <li>Untuk video/audio 5-10 menit</li>
+            <li>Tidak menggunakan chunking</li>
+            <li>Hasil lebih natural dan cepat</li>
         </ul>
         <b>Kelompok 8 – Proyek Akhir</b>
     </div>
@@ -205,74 +202,120 @@ st.divider()
 
 # 1. UPLOADER FILE
 file_diunggah = st.file_uploader(
-    "📤 Unggah file audio atau video",
+    "📤 Unggah file audio atau video (5-10 menit)",
     type=["wav", "mp3", "mp4", "m4a", "mkv"]
 )
 
 # SESSION STATE
-st.session_state.setdefault("transcript", "")
-st.session_state.setdefault("summary", "")
+st.session_state.setdefault("transkrip", "")
+st.session_state.setdefault("ringkasan", "")
+st.session_state.setdefault("berhasil", False)
 
 # BUTTON
-if st.button("🚀 Proses", type="primary", use_container_width=True):
-    if uploaded_file is None:
-        st.warning("⚠️ Silakan unggah file terlebih dahulu.")
-        st.stop()
-
-    try:
-        with st.spinner("🎵 Menyiapkan audio..."):
-            input_path = save_upload_to_tmp(uploaded_file)
-            wav_path = run_ffmpeg_to_wav16k(input_path)
-
-        with st.spinner("🔊 Sedang mengubah suara menjadi teks..."):
-            transcript = whisper_transcribe(wav_path)
-
-        with st.spinner("🏻 Sedang membuat ringkasan..."):
-            summary = gemini_summarize(transcript)
-
-        st.session_state.transcript = transcript
-        st.session_state.summary = summary
-
-        st.success("✅ Proses selesai!")
-
-    except Exception as e:
-        st.error(f"❌ Error: {e}")
+if file_diunggah is not None:
+    if st.button("🚀 Proses Sekarang", type="primary", use_container_width=True):
+        try:
+            # Langkah 1: Persiapan audio
+            with st.spinner("🎵 Menyiapkan audio..."):
+                jalur_input = simpan_unggahan_ke_sementara(file_diunggah)
+                jalur_wav = jalankan_ffmpeg_ke_wav16k(jalur_input)
+                st.success("✅ Audio siap diproses!")
+            
+            # Langkah 2: Transkripsi
+            with st.spinner("🔊 Sedang mengubah suara menjadi teks (tanpa chunking)..."):
+                transkrip = whisper_transkrip(jalur_wav)
+                st.session_state.transkrip = transkrip
+                st.success(f"✅ Transkripsi selesai! ({len(transkrip.split())} kata)")
+            
+            # Langkah 3: Ringkasan
+            with st.spinner("✍🏻 Sedang membuat ringkasan..."):
+                ringkasan = gemini_ringkasan(transkrip)
+                st.session_state.ringkasan = ringkasan
+                st.success("✅ Ringkasan selesai!")
+            
+            # Bersihkan file sementara
+            os.unlink(jalur_input)
+            os.unlink(jalur_wav)
+            
+            st.session_state.berhasil = True
+            
+        except Exception as e:
+            st.error(f"❌ Terjadi kesalahan: {str(e)}")
+            st.info("ℹ️ Pastikan file tidak terlalu panjang (maksimal 10 menit)")
 
 st.divider()
 
 # OUTPUT
-st.subheader("📄 Transkrip")
-st.text_area(
-    "Hasil Transkrip",
-    st.session_state.transcript,
-    height=220,
-    key="transcript_box"
-)
-
-st.subheader("📝 Ringkasan")
-st.text_area(
-    "Ringkasan Otomatis",
-    st.session_state.summary,
-    height=220,
-    key="summary_box"
-)
-
-col1, col2 = st.columns(2)
-
-with col1:
-    st.download_button(
-        "⬇️ Unduh Transkrip",
-        st.session_state.transcript,
-        "transcript.txt",
-        mime="text/plain",
-        use_container_width=True
+if st.session_state.berhasil or st.session_state.transkrip:
+    st.subheader("📄 Hasil Transkrip")
+    st.text_area(
+        "Transkrip Lengkap",
+        st.session_state.transkrip,
+        height=200,
+        key="kotak_transkrip"
     )
-
-with col2:
-    st.download_button(
-        "⬇️ Unduh Ringkasan",
-        st.session_state.summary,
-        "summary.txt",
-        mime="text/plain",
-        use_container_width=True
+    
+    st.subheader("📝 Hasil Ringkasan")
+    # Format ringkasan menjadi bullet points yang lebih rapi
+    ringkasan_rapi = st.session_state.ringkasan
+    # Ganti * dengan • untuk bullet points
+    ringkasan_rapi = re.sub(r'^\*', '•', ringkasan_rapi, flags=re.MULTILINE)
+    ringkasan_rapi = re.sub(r'\*\*', '', ringkasan_rapi)  # Hapus bold markdown
+    
+    st.text_area(
+        "Ringkasan Otomatis",
+        ringkasan_rapi,
+        height=200,
+        key="kotak_ringkasan"
     )
+    
+    # Tombol Unduh
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.download_button(
+            "📥 Unduh Transkrip (TXT)",
+            st.session_state.transkrip,
+            "transkrip.txt",
+            mime="text/plain",
+            use_container_width=True,
+            icon="📄"
+        )
+    
+    with col2:
+        st.download_button(
+            "📥 Unduh Ringkasan (TXT)",
+            st.session_state.ringkasan,
+            "ringkasan.txt",
+            mime="text/plain",
+            use_container_width=True,
+            icon="📝"
+        )
+    
+    # Tombol Reset
+    if st.button("🔄 Proses File Baru", use_container_width=True):
+        st.session_state.transkrip = ""
+        st.session_state.ringkasan = ""
+        st.session_state.berhasil = False
+        st.rerun()
+
+# Informasi tambahan
+with st.expander("ℹ️ Informasi Aplikasi"):
+    st.markdown("""
+    ### Fitur Aplikasi:
+    1. **Tanpa Chunking**: Memproses audio secara utuh tanpa memotong-motong
+    2. **Cepat**: Optimal untuk video 5-10 menit
+    3. **Natural**: Hasil transkripsi lebih mengalir dan natural
+    
+    ### Batasan:
+    - Maksimal 10 menit per file
+    - Format yang didukung: WAV, MP3, MP4, M4A, MKV
+    - Membutuhkan koneksi internet untuk Gemini API
+    
+    ### Cara Kerja:
+    1. Upload file audio/video
+    2. Sistem konversi ke WAV 16kHz
+    3. Whisper transkripsi ke teks
+    4. Gemini buat ringkasan
+    5. Unduh hasil dalam format TXT
+    """)
