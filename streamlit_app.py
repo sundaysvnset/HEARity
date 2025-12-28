@@ -11,9 +11,9 @@ from google import genai
 # =========================
 # CONFIG
 # =========================
-MODEL_ID = "jovangelo/whispermodelproyek"
+MODEL_ID = "jovangelo/whispermodelproyek"  
 LANG = "id"
-DEVICE = "cpu"
+DEVICE = "cpu"  
 
 # =========================
 # LOAD MODELS (CACHED)
