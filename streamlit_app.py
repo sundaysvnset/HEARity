@@ -31,7 +31,6 @@ def load_whisper():
     return processor, model
 
 
-
 @st.cache_resource
 def load_gemini():
     return genai.Client(api_key=st.secrets["GEMINI_API_KEY"])
@@ -75,33 +74,58 @@ def download_youtube_audio(url):
     return run_ffmpeg_to_wav16k(os.path.join(tmpdir, filename))
 
 # =========================
+# SPLIT AUDIO INTO CHUNKS
+# =========================
+def split_audio_into_chunks(audio, chunk_duration=30, sr=16000):
+    # Split the audio into chunks of the given duration (in seconds)
+    chunk_samples = int(chunk_duration * sr)
+    num_chunks = len(audio) // chunk_samples
+    chunks = [audio[i * chunk_samples:(i + 1) * chunk_samples] for i in range(num_chunks)]
+    
+    # Handle the remainder of the audio that doesn't fill a full chunk
+    if len(audio) % chunk_samples != 0:
+        chunks.append(audio[num_chunks * chunk_samples:])
+    
+    return chunks
+
+# =========================
 # WHISPER TRANSCRIPTION
 # =========================
 def whisper_transcribe(wav_path):
     audio, _ = librosa.load(wav_path, sr=16000)
 
-    inputs = processor(
-        audio,
-        sampling_rate=16000,
-        return_tensors="pt"
-    )
+    # Split the audio into 30-second chunks
+    chunks = split_audio_into_chunks(audio)
 
-    forced_ids = processor.get_decoder_prompt_ids(
-        language=LANG,
-        task="transcribe"
-    )
-
-    with torch.no_grad():
-        pred_ids = whisper_model.generate(
-            **inputs,
-            forced_decoder_ids=forced_ids,
-            max_new_tokens=448
+    transcriptions = []
+    for chunk in chunks:
+        inputs = processor(
+            chunk,
+            sampling_rate=16000,
+            return_tensors="pt"
         )
 
-    return processor.batch_decode(
-        pred_ids,
-        skip_special_tokens=True
-    )[0]
+        forced_ids = processor.get_decoder_prompt_ids(
+            language=LANG,
+            task="transcribe"
+        )
+
+        with torch.no_grad():
+            pred_ids = whisper_model.generate(
+                **inputs,
+                forced_decoder_ids=forced_ids,
+                max_new_tokens=448
+            )
+
+        transcription = processor.batch_decode(
+            pred_ids,
+            skip_special_tokens=True
+        )[0]
+        transcriptions.append(transcription)
+
+    # Combine all transcriptions
+    full_transcription = " ".join(transcriptions)
+    return full_transcription
 
 # =========================
 # GEMINI SUMMARIZATION
