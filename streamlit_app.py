@@ -11,7 +11,7 @@ from google import genai
 # =========================
 # CONFIG
 # =========================
-MODEL_ID = "jovangelo/whispermodelproyek"
+MODEL_ID = "openai/whisper-medium"   # ⬅️ PAKAI WHISPER BAWAAN DULU
 LANG = "id"
 DEVICE = "cpu"
 
@@ -33,6 +33,8 @@ def load_whisper():
 
 @st.cache_resource
 def load_gemini():
+    if "GEMINI_API_KEY" not in st.secrets:
+        raise RuntimeError("GEMINI_API_KEY belum diset di Streamlit Secrets")
     return genai.Client(api_key=st.secrets["GEMINI_API_KEY"])
 
 
@@ -85,6 +87,9 @@ def whisper_transcribe(wav_path):
         return_tensors="pt"
     )
 
+    # ⬅️ FIX DEVICE
+    inputs = {k: v.to(DEVICE) for k, v in inputs.items()}
+
     forced_ids = processor.get_decoder_prompt_ids(
         language=LANG,
         task="transcribe"
@@ -100,7 +105,7 @@ def whisper_transcribe(wav_path):
     return processor.batch_decode(
         pred_ids,
         skip_special_tokens=True
-    )[0]
+    )[0].strip()
 
 # =========================
 # GEMINI SUMMARIZATION
@@ -188,7 +193,7 @@ if process_btn:
             else:
                 wav_path = download_youtube_audio(video_url)
 
-        with st.spinner("Melakukan transkripsi (Whisper finetuned)..."):
+        with st.spinner("Melakukan transkripsi (Whisper)..."):
             transcript = whisper_transcribe(wav_path)
 
         with st.spinner("Membuat ringkasan (Gemini)..."):
