@@ -1,4 +1,5 @@
 import os
+import re
 import tempfile
 import subprocess
 import streamlit as st
@@ -15,12 +16,13 @@ from google import genai
 MODEL_ID = "jovangelo/whispermodelproyek"
 LANG = "id"
 DEVICE = "cpu"
+
 SAMPLE_RATE = 16000
-CHUNK_DURATION = 30  # seconds
-MAX_NEW_TOKENS = 300
+CHUNK_DURATION = 20        # seconds (AMAN & CEPAT)
+MAX_NEW_TOKENS = 200       # JANGAN > 200
 
 # =========================
-# LOAD MODELS (CACHED)
+# LOAD MODELS
 # =========================
 @st.cache_resource(show_spinner="📦 Memuat model Whisper...")
 def load_whisper():
@@ -37,6 +39,8 @@ def load_whisper():
 
 @st.cache_resource(show_spinner="📦 Memuat Gemini...")
 def load_gemini():
+    if "GEMINI_API_KEY" not in st.secrets:
+        raise RuntimeError("GEMINI_API_KEY belum diset di Secrets")
     return genai.Client(api_key=st.secrets["GEMINI_API_KEY"])
 
 
@@ -69,32 +73,39 @@ def run_ffmpeg_to_wav16k(input_path):
     return out_path
 
 
-def download_youtube_audio(url):
-    tmpdir = tempfile.mkdtemp()
-    outtmpl = os.path.join(tmpdir, "audio.%(ext)s")
-
-    subprocess.run(
-        ["yt-dlp", "-f", "bestaudio", "-o", outtmpl, url],
-        check=True,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL
-    )
-
-    filename = os.listdir(tmpdir)[0]
-    return run_ffmpeg_to_wav16k(os.path.join(tmpdir, filename))
-
 # =========================
 # AUDIO CHUNKING
 # =========================
 def split_audio(audio, sr=SAMPLE_RATE, chunk_duration=CHUNK_DURATION):
     chunk_size = int(chunk_duration * sr)
-    chunks = []
+    return [
+        audio[i:i + chunk_size]
+        for i in range(0, len(audio), chunk_size)
+    ]
 
-    for start in range(0, len(audio), chunk_size):
-        end = start + chunk_size
-        chunks.append(audio[start:end])
 
-    return chunks
+# =========================
+# TRANSCRIPT AUTO CLEAN
+# =========================
+def clean_transcript(text: str) -> str:
+    text = text.lower()
+
+    # hapus filler umum
+    fillers = [
+        r"\buh+\b", r"\bum+\b", r"\beh+\b", r"\bhmm+\b",
+        r"\banu\b", r"\bgitu\b", r"\bjadi\b"
+    ]
+    for f in fillers:
+        text = re.sub(f, "", text)
+
+    # hapus pengulangan kata berturut-turut
+    text = re.sub(r"\b(\w+)( \1\b)+", r"\1", text)
+
+    # rapikan spasi
+    text = re.sub(r"\s+", " ", text)
+
+    return text.strip()
+
 
 # =========================
 # WHISPER TRANSCRIPTION
@@ -110,8 +121,8 @@ def whisper_transcribe(wav_path):
 
     results = []
 
-    for i, chunk in enumerate(chunks):
-        if len(chunk) < SAMPLE_RATE:
+    for chunk in chunks:
+        if len(chunk) < SAMPLE_RATE * 2:
             continue
 
         inputs = processor(
@@ -121,20 +132,23 @@ def whisper_transcribe(wav_path):
         )
 
         with torch.no_grad():
-            predicted_ids = whisper_model.generate(
+            pred_ids = whisper_model.generate(
                 input_features=inputs.input_features.to(DEVICE),
                 forced_decoder_ids=forced_ids,
-                max_new_tokens=MAX_NEW_TOKENS
+                max_new_tokens=MAX_NEW_TOKENS,
+                do_sample=False
             )
 
         text = processor.batch_decode(
-            predicted_ids,
+            pred_ids,
             skip_special_tokens=True
         )[0]
 
-        results.append(text.strip())
+        results.append(text)
 
-    return " ".join(results)
+    raw_text = " ".join(results)
+    return clean_transcript(raw_text)
+
 
 # =========================
 # GEMINI SUMMARIZATION
@@ -147,9 +161,9 @@ Ringkas materi berikut dalam bentuk BULLET POINTS yang komprehensif.
 
 Aturan:
 - Tangkap alur pembahasan dari awal sampai akhir
-- Sertakan semua konsep dan topik penting
-- Jelaskan definisi dan perbedaan konsep jika ada
-- Gunakan Bahasa Indonesia akademik
+- Sertakan konsep utama dan penjelasan penting
+- Gunakan Bahasa Indonesia akademik & jelas
+- Jangan menyalin kalimat mentah
 - Maksimal 10–12 bullet points
 
 MATERI:
@@ -163,6 +177,7 @@ MATERI:
 
     return response.text.strip()
 
+
 # =========================
 # UI
 # =========================
@@ -172,105 +187,73 @@ st.set_page_config(
     layout="centered"
 )
 
-# ===== HEADER =====
 st.title("🎧 HEARity")
-st.caption(
-    "Speech-to-Text & Automatic Summarization berbasis Whisper + Generative AI"
-)
+st.caption("Speech-to-Text & Automatic Summarization berbasis Whisper + Generative AI")
 
 st.markdown("""
-Penyandang gangguan pendengaran seringkali mengalami kesulitan memahami percakapan,
-perkuliahan, atau informasi berbasis audio.
-
-Walaupun teknologi *speech recognition* sudah tersedia, hasil transkrip sering kali
-panjang dan sulit dipahami. Oleh karena itu, **HEARity** dikembangkan untuk:
-- Mengubah audio/video menjadi teks (Speech-to-Text)
-- Menghasilkan ringkasan otomatis yang ringkas dan informatif
+HEARity membantu penyandang gangguan pendengaran untuk:
+- Mengubah audio/video menjadi teks
+- Menghasilkan ringkasan otomatis yang mudah dipahami
 
 🎓 **Final Project – Biomedical Engineering**
 """)
 
 st.divider()
 
-# ===== INPUT SECTION =====
-st.subheader("📥 Input Audio / Video")
-
+# INPUT
 uploaded_file = st.file_uploader(
-    "Unggah file audio atau video",
-    type=["mp3", "mp4", "wav", "mkv", "m4a"],
-    help="Format audio/video yang didukung: mp3, mp4, wav, mkv, m4a"
+    "📥 Unggah file audio / video",
+    type=["mp3", "wav", "mp4", "mkv", "m4a"]
 )
 
-st.markdown("**Atau**")
+# SESSION STATE
+st.session_state.setdefault("transcript", "")
+st.session_state.setdefault("summary", "")
 
-video_url = st.text_input(
-    "Masukkan URL video (misalnya YouTube)",
-    placeholder="https://www.youtube.com/..."
-)
-
-# ===== SESSION STATE INIT =====
-if "transcript" not in st.session_state:
-    st.session_state.transcript = ""
-
-if "summary" not in st.session_state:
-    st.session_state.summary = ""
-
-st.divider()
-
-# ===== PROCESS BUTTON =====
-process_btn = st.button(
-    "🚀 Proses Transkripsi & Ringkasan",
-    type="primary",
-    use_container_width=True
-)
-
-if process_btn:
-    if uploaded_file is None and not video_url:
-        st.warning("⚠️ Silakan unggah file atau masukkan URL video terlebih dahulu.")
+# BUTTON
+if st.button("🚀 Proses", type="primary", use_container_width=True):
+    if uploaded_file is None:
+        st.warning("⚠️ Silakan unggah file terlebih dahulu.")
         st.stop()
 
     try:
         with st.spinner("🎵 Menyiapkan audio..."):
-            if uploaded_file:
-                input_path = save_upload_to_tmp(uploaded_file)
-                wav_path = run_ffmpeg_to_wav16k(input_path)
-            else:
-                wav_path = download_youtube_audio(video_url)
+            input_path = save_upload_to_tmp(uploaded_file)
+            wav_path = run_ffmpeg_to_wav16k(input_path)
 
-        with st.spinner("🧠 Melakukan transkripsi (Whisper finetuned)..."):
+        with st.spinner("🧠 Transkripsi dengan Whisper..."):
             transcript = whisper_transcribe(wav_path)
 
-        with st.spinner("✍️ Membuat ringkasan (Gemini)..."):
+        with st.spinner("✍️ Membuat ringkasan..."):
             summary = gemini_summarize(transcript)
 
         st.session_state.transcript = transcript
         st.session_state.summary = summary
 
-        st.success("✅ Proses selesai! Hasil tersedia di bawah.")
+        st.success("✅ Proses selesai!")
 
     except Exception as e:
-        st.error(f"❌ Gagal memproses: {e}")
+        st.error(f"❌ Error: {e}")
 
 st.divider()
 
-# ===== OUTPUT SECTION =====
-st.subheader("📄 Hasil Transkripsi")
+# OUTPUT
+st.subheader("📄 Transkrip")
 st.text_area(
-    label="Transkrip",
-    value=st.session_state.transcript or "Transkrip akan ditampilkan di sini.",
+    "Hasil Transkrip",
+    st.session_state.transcript,
     height=220,
     key="transcript_box"
 )
 
-st.subheader("📝 Ringkasan Otomatis")
+st.subheader("📝 Ringkasan")
 st.text_area(
-    label="Ringkasan",
-    value=st.session_state.summary or "Ringkasan akan ditampilkan di sini.",
+    "Ringkasan Otomatis",
+    st.session_state.summary,
     height=220,
     key="summary_box"
 )
 
-# ===== DOWNLOAD BUTTONS =====
 col1, col2 = st.columns(2)
 
 with col1:
@@ -290,9 +273,3 @@ with col2:
         mime="text/plain",
         use_container_width=True
     )
-
-st.download_button(
-    "⬇️ Unduh Ringkasan",
-    st.session_state.summary,
-    "summary.txt"
-)
