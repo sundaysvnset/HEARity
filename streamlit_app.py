@@ -18,12 +18,12 @@ DEVICE = "cpu"
 # =========================
 # LOAD MODELS (CACHED)
 # =========================
-@st.cache_resource(show_spinner="📦 Memuat model Whisper...")
+@@st.cache_resource(show_spinner="📦 Memuat model Whisper...")
 def load_whisper():
     processor = WhisperProcessor.from_pretrained(MODEL_ID)
     model = WhisperForConditionalGeneration.from_pretrained(
         MODEL_ID,
-        torch_dtype=torch.float32,
+        dtype=torch.float32,  # Use dtype instead of torch_dtype
         low_cpu_mem_usage=True
     )
     model.to(DEVICE)
