@@ -11,7 +11,7 @@ from google import genai
 # =========================
 # CONFIG
 # =========================
-MODEL_ID = "openai/whisper-medium"   # ⬅️ PAKAI WHISPER BAWAAN DULU
+MODEL_ID = "openai/whisper-small"   # ⬅️ PAKAI WHISPER BAWAAN DULU
 LANG = "id"
 DEVICE = "cpu"
 
