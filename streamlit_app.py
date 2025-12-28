@@ -11,9 +11,9 @@ from google import genai
 # =========================
 # CONFIG
 # =========================
-MODEL_ID = "openai/whisper-small"   # Whisper bawaan (FREE)
+MODEL_ID = "jovangelo/whispermodelproyek"
 LANG = "id"
-DEVICE = "cpu"                     # Streamlit Cloud = CPU
+DEVICE = "cpu"
 
 # =========================
 # LOAD MODELS (CACHED)
@@ -33,8 +33,6 @@ def load_whisper():
 
 @st.cache_resource
 def load_gemini():
-    if "GEMINI_API_KEY" not in st.secrets:
-        raise RuntimeError("GEMINI_API_KEY belum diset di Streamlit Secrets")
     return genai.Client(api_key=st.secrets["GEMINI_API_KEY"])
 
 
@@ -62,41 +60,18 @@ def run_ffmpeg_to_wav16k(input_path):
 
 
 def download_youtube_audio(url):
-    """
-    OPTIONAL FEATURE
-    Bisa gagal di Streamlit Cloud → handled gracefully
-    """
     tmpdir = tempfile.mkdtemp()
     outtmpl = os.path.join(tmpdir, "audio.%(ext)s")
 
-    try:
-        subprocess.run(
-            [
-                "yt-dlp",
-                "-f", "bestaudio/best",
-                "--no-playlist",
-                "-o", outtmpl,
-                url
-            ],
-            check=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE
-        )
-    except subprocess.CalledProcessError:
-        raise RuntimeError(
-            "Gagal mengunduh audio dari YouTube.\n\n"
-            "Kemungkinan penyebab:\n"
-            "- yt-dlp tidak tersedia di server\n"
-            "- Video dibatasi (private / age-restricted)\n"
-            "- YouTube memblokir akses\n\n"
-            "Solusi: download audio secara manual lalu upload file."
-        )
+    subprocess.run(
+        ["yt-dlp", "-f", "bestaudio", "-o", outtmpl, url],
+        check=True,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL
+    )
 
-    files = os.listdir(tmpdir)
-    if not files:
-        raise RuntimeError("Audio YouTube tidak ditemukan.")
-
-    return run_ffmpeg_to_wav16k(os.path.join(tmpdir, files[0]))
+    filename = os.listdir(tmpdir)[0]
+    return run_ffmpeg_to_wav16k(os.path.join(tmpdir, filename))
 
 # =========================
 # WHISPER TRANSCRIPTION
@@ -110,8 +85,6 @@ def whisper_transcribe(wav_path):
         return_tensors="pt"
     )
 
-    inputs = {k: v.to(DEVICE) for k, v in inputs.items()}
-
     forced_ids = processor.get_decoder_prompt_ids(
         language=LANG,
         task="transcribe"
@@ -121,13 +94,13 @@ def whisper_transcribe(wav_path):
         pred_ids = whisper_model.generate(
             **inputs,
             forced_decoder_ids=forced_ids,
-            max_new_tokens=400   # ⬅️ FIX TOKEN LIMIT
+            max_new_tokens=448
         )
 
     return processor.batch_decode(
         pred_ids,
         skip_special_tokens=True
-    )[0].strip()
+    )[0]
 
 # =========================
 # GEMINI SUMMARIZATION
@@ -140,13 +113,14 @@ Ringkas materi berikut dalam bentuk BULLET POINTS yang komprehensif.
 
 Aturan:
 - Tangkap alur pembahasan dari awal sampai akhir
-- Sertakan semua konsep dan topik penting
-- Jelaskan definisi, klasifikasi, dan perbedaan konsep utama
-- Sertakan tujuan dan implikasi pembahasan
-- Gunakan Bahasa Indonesia akademik dan netral
+- Sertakan semua konsep dan topik penting yang muncul
+- Jelaskan definisi, klasifikasi, dan perbedaan konsep utama jika ada
+- Sertakan tujuan, alasan pentingnya topik, dan implikasinya
+- Gunakan Bahasa Indonesia yang rapi, netral, dan akademik
 - Jangan menyalin kalimat mentah
 - Maksimal 10–12 bullet points
-- Jangan gunakan LaTeX
+- Jangan gunakan notasi LaTeX
+- Gunakan simbol Unicode matematika jika diperlukan
 
 MATERI:
 {full_text}
@@ -164,87 +138,96 @@ MATERI:
 # =========================
 st.set_page_config(page_title="HEARity", page_icon="🎧")
 
-st.title("🎧 HEARity")
-st.subheader("Speech-to-Text & Automatic Summarization")
+st.title(
+    "HEARity: Speech-to-Text Summarization Berbasis Generative AI",
+    anchor="title"
+)
 
 st.write("""
-**HEARity** membantu penyandang gangguan pendengaran memahami
-informasi berbasis audio dengan mengubah suara menjadi teks
-dan ringkasan otomatis menggunakan AI.
+Penyandang gangguan pendengaran seringkali mengalami kesulitan untuk memahami percakapan,
+perkuliahan, atau informasi berbasis suara lainnya.
+
+Walaupun saat ini sudah ada teknologi speech recognition, hasil transkrip sering kali sangat panjang
+dan sulit dipahami. Oleh karena itu, **HEARity** dikembangkan untuk mengubah suara menjadi teks
+dan menghasilkan ringkasan otomatis.
+
+**Final Project** ini bertujuan meningkatkan aksesibilitas komunikasi dan pendidikan
+bagi penyandang gangguan pendengaran.
 """)
 
-st.info(
-    "ℹ️ Disarankan menggunakan **Upload File**.\n"
-    "Fitur YouTube URL bersifat opsional dan bisa gagal di server publik."
-)
+st.write("### Pilih File Audio/Video atau URL Video untuk Diproses")
 
 uploaded_file = st.file_uploader(
-    "Upload file audio / video",
-    type=["mp3", "wav", "mp4", "mkv"]
+    "Pilih file audio/video",
+    type=["mp3", "mp4", "wav", "mkv"]
 )
 
-st.write("Atau masukkan URL YouTube (opsional)")
-video_url = st.text_input("URL Video")
+st.write("Atau, masukkan URL video (misalnya YouTube)")
+video_url = st.text_input("Masukkan URL Video (opsional)")
 
 if "transcript" not in st.session_state:
     st.session_state.transcript = ""
 if "summary" not in st.session_state:
     st.session_state.summary = ""
 
-if st.button("🚀 Proses Transkripsi & Ringkasan", type="primary"):
+process_btn = st.button(
+    "Proses Transkripsi & Ringkasan",
+    type="primary"
+)
+
+if process_btn:
     if uploaded_file is None and not video_url:
-        st.warning("Upload file atau masukkan URL terlebih dahulu.")
+        st.warning("Silakan upload file atau masukkan URL terlebih dahulu.")
         st.stop()
 
     try:
-        with st.spinner("🎼 Menyiapkan audio..."):
+        with st.spinner("Menyiapkan audio..."):
             if uploaded_file:
                 input_path = save_upload_to_tmp(uploaded_file)
                 wav_path = run_ffmpeg_to_wav16k(input_path)
             else:
                 wav_path = download_youtube_audio(video_url)
 
-        with st.spinner("📝 Melakukan transkripsi (Whisper)..."):
+        with st.spinner("Melakukan transkripsi (Whisper finetuned)..."):
             transcript = whisper_transcribe(wav_path)
 
-        with st.spinner("🧠 Membuat ringkasan (Gemini)..."):
+        with st.spinner("Membuat ringkasan (Gemini)..."):
             summary = gemini_summarize(transcript)
 
         st.session_state.transcript = transcript
         st.session_state.summary = summary
 
-        st.success("✅ Selesai!")
+        st.success("Selesai! Transkrip dan ringkasan tersedia.")
 
     except Exception as e:
-        st.error(f"Gagal memproses:\n{e}")
+        st.error(f"Gagal memproses: {e}")
 
-# =========================
-# OUTPUT
-# =========================
-st.write("### 📄 Transkrip")
+st.write("### Transkrip:")
 st.text_area(
-    "Hasil Transkrip",
-    value=st.session_state.transcript,
+    "Transkrip",
+    value=st.session_state.transcript or "Transkrip akan ditampilkan di sini.",
     height=200
 )
 
-st.write("### 🧾 Ringkasan")
+st.write("### Ringkasan:")
 st.text_area(
-    "Hasil Ringkasan",
-    value=st.session_state.summary,
+    "Ringkasan",
+    value=st.session_state.summary or "Ringkasan akan ditampilkan di sini.",
     height=200
 )
 
 st.download_button(
-    "⬇️ Unduh Transkrip",
+    "Unduh Transkrip",
     st.session_state.transcript,
     "transcript.txt",
-    mime="text/plain"
+    mime="text/plain",
+    use_container_width=True
 )
 
 st.download_button(
-    "⬇️ Unduh Ringkasan",
+    "Unduh Ringkasan",
     st.session_state.summary,
     "summary.txt",
-    mime="text/plain"
+    mime="text/plain",
+    use_container_width=True
 )
