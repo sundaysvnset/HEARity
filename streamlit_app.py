@@ -61,6 +61,20 @@ def run_ffmpeg_to_wav16k(input_path):
     return out_path
 
 
+def download_youtube_audio(url):
+    tmpdir = tempfile.mkdtemp()
+    outtmpl = os.path.join(tmpdir, "audio.%(ext)s")
+
+    subprocess.run(
+        ["yt-dlp", "-f", "bestaudio", "-o", outtmpl, url],
+        check=True,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL
+    )
+
+    filename = os.listdir(tmpdir)[0]
+    return run_ffmpeg_to_wav16k(os.path.join(tmpdir, filename))
+
 # =========================
 # WHISPER TRANSCRIPTION
 # =========================
@@ -124,9 +138,9 @@ MATERI:
 
     return response.text.strip()
 
-# =====================
-# BAGIAN HEADER / JUDUL
-# =====================
+# =========================
+# UI
+# =========================
 st.markdown(
     """
     <div style="padding:30px 10px;">
@@ -144,91 +158,79 @@ st.markdown(
     unsafe_allow_html=True
 )
 
-# =====================
-# ANTARMUKA PENGGUNA UTAMA
-# =====================
-# 1. UPLOADER FILE
-file_diunggah = st.file_uploader(
+st.write("### Pilih File Audio/Video atau URL Video untuk Diproses")
+
+uploaded_file = st.file_uploader(
     "📤 Unggah file audio atau video",
-    type=["wav", "mp3", "mp4", "m4a", "mkv"]
+    type=["mp3", "mp4", "wav", "mkv"]
 )
 
-# 2. TOMBOL PROSES
-if file_diunggah:
-    if st.button("Mulai Proses", use_container_width=True):
-        with tempfile.NamedTemporaryFile(delete=False) as sementara:
-            sementara.write(file_diunggah.read())
-            jalur_audio = sementara.name
+st.write("Atau, masukkan URL video (misalnya YouTube)")
+video_url = st.text_input("Masukkan URL Video (opsional)")
 
-        # --- Proses Transkripsi ---
-        with st.spinner("🔊 Sedang mengubah suara menjadi teks..."):
-            hasil = whisper_transcribe(jalur_audio)
+if "transcript" not in st.session_state:
+    st.session_state.transcript = ""
+if "summary" not in st.session_state:
+    st.session_state.summary = ""
 
-        if "text" in hasil:
-            st.session_state.teks_lengkap = hasil
-        else:
-            st.session_state.teks_lengkap = " ".join(
-                c["text"] for c in hasil["chunks"]
-            )
+process_btn = st.button(
+    "Proses Transkripsi & Ringkasan",
+    type="primary"
+)
 
-        # --- Proses Ringkasan ---
-        with st.spinner("✍🏻 Sedang membuat ringkasan..."):
-            instruksi = f"""
-Ringkas materi berikut dalam bentuk POIN-POIN PENTING.
+if process_btn:
+    if uploaded_file is None and not video_url:
+        st.warning("Silakan upload file atau masukkan URL terlebih dahulu.")
+        st.stop()
 
-Aturan:
-- Ikuti alur pembahasan dari awal sampai akhir
-- Cantumkan semua konsep dan topik penting
-- Jelaskan definisi, klasifikasi, dan perbedaan konsep utama jika ada
-- Sertakan tujuan, alasan pentingnya topik, dan implikasinya
-- Gunakan Bahasa Indonesia yang formal dan akademis
-- Jangan menyalin kalimat asli secara mentah
-- Maksimal 10–12 poin penting
-- Jangan gunakan notasi LaTeX
-- Gunakan simbol Unicode matematika jika diperlukan
-MATERI:
-{st.session_state.teks_lengkap}
-"""
-            respon = gemini_summarize(st.session_state.teks_lengkap)
+    try:
+        with st.spinner("Menyiapkan audio..."):
+            if uploaded_file:
+                input_path = save_upload_to_tmp(uploaded_file)
+                wav_path = run_ffmpeg_to_wav16k(input_path)
+            else:
+                wav_path = download_youtube_audio(video_url)
 
-            st.session_state.ringkasan_mentah = respon
+        with st.spinner("Melakukan transkripsi (Whisper)..."):
+            transcript = whisper_transcribe(wav_path)
 
-        st.session_state.selesai = True
+        with st.spinner("Membuat ringkasan (Gemini)..."):
+            summary = gemini_summarize(transcript)
 
+        st.session_state.transcript = transcript
+        st.session_state.summary = summary
 
-# =====================
-# TAMPILAN HASIL
-# =====================
-if st.session_state.selesai:
-    # 3. AREA TEKS TRANSCRIPT
-    st.subheader("📄 Transkrip Lengkap")
-    st.text_area("", st.session_state.teks_lengkap, height=260)
+        st.success("Selesai! Transkrip dan ringkasan tersedia.")
 
-    # 4. AREA TEKS RINGKASAN
-    st.subheader("📝 Ringkasan Materi")
+    except Exception as e:
+        st.error(f"Gagal memproses: {e}")
 
-    ringkasan_rapi = []
-    for baris in st.session_state.ringkasan_mentah.split("\n"):
-        if baris.strip().startswith("*"):
-            bersih = re.sub(r"^\*\s*", "", baris)
-            bersih = re.sub(r"\*+", "", bersih)
-            ringkasan_rapi.append("• " + bersih)
+st.write("### 📄 Transkrip Lengkap:")
+st.text_area(
+    "Transkrip",
+    value=st.session_state.transcript or "Transkrip akan ditampilkan di sini.",
+    height=200
+)
 
-    st.text_area("", "\n".join(ringkasan_rapi), height=260)
+st.write("### 📝 Ringkasan Materi")
+st.text_area(
+    "Ringkasan",
+    value=st.session_state.summary or "Ringkasan akan ditampilkan di sini.",
+    height=200
+)
 
-    # 5. TOMBOL UNDUH PDF
-    kolom1, kolom2 = st.columns(2)
+st.download_button(
+    "⬇️ Unduh Transkrip (PDF)",
+    st.session_state.transcript,
+    "transcript.txt",
+    mime="text/plain",
+    use_container_width=True
+)
 
-    with kolom1:
-        st.download_button(
-            "⬇️ Unduh Transkrip (PDF)",
-            "file_transkrip",
-            use_container_width=True
-        )
-
-    with kolom2:
-        st.download_button(
-            "⬇️ Unduh Ringkasan (PDF)",
-            "file_ringkasan",
-            use_container_width=True
-        )
+st.download_button(
+    "⬇️ Unduh Ringkasan (PDF)",
+    st.session_state.summary,
+    "summary.txt",
+    mime="text/plain",
+    use_container_width=True
+)
