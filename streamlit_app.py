@@ -7,7 +7,7 @@ import torch
 import librosa
 
 from transformers import WhisperProcessor, WhisperForConditionalGeneration
-from google import genai
+import google.generativeai as genai  # ✅ FIXED IMPORT
 
 from reportlab.platypus import (
     SimpleDocTemplate, Paragraph, ListFlowable, ListItem
@@ -23,7 +23,7 @@ MODEL_ID = "openai/whisper-medium"
 LANG = "id"
 DEVICE = "cpu"
 SAMPLE_RATE = 16000
-MAX_NEW_TOKENS = 448
+MAX_NEW_TOKENS = 400  # aman < 448
 
 # =========================
 # LOAD MODELS (CACHED)
@@ -43,11 +43,12 @@ def load_whisper():
 
 @st.cache_resource(show_spinner="📦 Memuat Gemini...")
 def load_gemini():
-    return genai.Client(api_key=st.secrets["GEMINI_API_KEY"])
+    genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
+    return genai.GenerativeModel("gemini-1.5-flash")
 
 
 processor, whisper_model = load_whisper()
-gemini_client = load_gemini()
+gemini_model = load_gemini()
 
 # =========================
 # AUDIO HELPERS
@@ -124,11 +125,7 @@ MATERI:
 {full_text}
 """
 
-    response = gemini_client.models.generate_content(
-        model="models/gemini-2.5-flash",
-        contents=prompt
-    )
-
+    response = gemini_model.generate_content(prompt)
     return response.text.strip()
 
 # =====================
