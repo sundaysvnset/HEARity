@@ -4,22 +4,19 @@ import subprocess
 import streamlit as st
 import torch
 import librosa
-import re
 
 from transformers import WhisperProcessor, WhisperForConditionalGeneration
 from google import genai
 
-
 # =========================
-# KONFIGURASI
+# CONFIG
 # =========================
-MODEL_ID = "openai/whisper-small"
+MODEL_ID = "openai/whisper-small"   # ⬅️ PAKAI WHISPER BAWAAN DULU
 LANG = "id"
 DEVICE = "cpu"
 
-
 # =========================
-# LOAD MODEL (CACHED)
+# LOAD MODELS (CACHED)
 # =========================
 @st.cache_resource(show_spinner="📦 Memuat model Whisper...")
 def load_whisper():
@@ -42,34 +39,32 @@ def load_gemini():
 
 
 processor, whisper_model = load_whisper()
-klien_gemini = load_gemini()
-
 
 # =========================
-# HELPER AUDIO
+# AUDIO HELPERS
 # =========================
-def simpan_file_sementara(uploaded_file):
-    ekstensi = os.path.splitext(uploaded_file.name)[1]
-    with tempfile.NamedTemporaryFile(delete=False, suffix=ekstensi) as tmp:
+def save_upload_to_tmp(uploaded_file):
+    suffix = os.path.splitext(uploaded_file.name)[1]
+    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
         tmp.write(uploaded_file.read())
         return tmp.name
 
 
-def konversi_ke_wav_16k(input_path):
-    output_path = input_path + "_16k.wav"
+def run_ffmpeg_to_wav16k(input_path):
+    out_path = input_path + "_16k.wav"
     subprocess.run(
-        ["ffmpeg", "-y", "-i", input_path, "-ac", "1", "-ar", "16000", output_path],
+        ["ffmpeg", "-y", "-i", input_path, "-ac", "1", "-ar", "16000", out_path],
         check=True,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL
     )
-    return output_path
+    return out_path
 
 
 # =========================
-# TRANSKRIPSI WHISPER
+# WHISPER TRANSCRIPTION
 # =========================
-def whisper_transkripsi(wav_path):
+def whisper_transcribe(wav_path):
     audio, _ = librosa.load(wav_path, sr=16000)
 
     inputs = processor(
@@ -77,6 +72,8 @@ def whisper_transkripsi(wav_path):
         sampling_rate=16000,
         return_tensors="pt"
     )
+
+    # ⬅️ FIX DEVICE
     inputs = {k: v.to(DEVICE) for k, v in inputs.items()}
 
     forced_ids = processor.get_decoder_prompt_ids(
@@ -96,50 +93,46 @@ def whisper_transkripsi(wav_path):
         skip_special_tokens=True
     )[0].strip()
 
+# =========================
+# GEMINI SUMMARIZATION
+# =========================
+def gemini_summarize(full_text):
+    client = load_gemini()
 
-# =========================
-# RINGKASAN GEMINI
-# =========================
-def gemini_summarize(teks_lengkap):
     prompt = f"""
 Ringkas materi berikut dalam bentuk BULLET POINTS yang komprehensif.
 
 Aturan:
 - Tangkap alur pembahasan dari awal sampai akhir
-- Sertakan semua konsep dan topik penting
-- Gunakan Bahasa Indonesia yang rapi dan akademik
-- Maksimal 10–12 bullet points
+- Sertakan semua konsep dan topik penting yang muncul
+- Jelaskan definisi, klasifikasi, dan perbedaan konsep utama jika ada
+- Sertakan tujuan, alasan pentingnya topik, dan implikasinya
+- Gunakan Bahasa Indonesia yang rapi, netral, dan akademik
 - Jangan menyalin kalimat mentah
+- Maksimal 10–12 bullet points
+- Jangan gunakan notasi LaTeX
+- Gunakan simbol Unicode matematika jika diperlukan
 
 MATERI:
-{teks_lengkap}
+{full_text}
 """
 
-    respons = klien_gemini.models.generate_content(
+    response = client.models.generate_content(
         model="models/gemini-2.5-flash",
         contents=prompt
     )
 
-    return respons.text.strip()
+    return response.text.strip()
 
-
-# =========================
-# SESSION STATE
-# =========================
-for k in ["teks_lengkap", "ringkasan_mentah", "selesai"]:
-    if k not in st.session_state:
-        st.session_state[k] = "" if k != "selesai" else False
-
-
-# =========================
-# UI – HEADER
-# =========================
+# =====================
+# BAGIAN HEADER / JUDUL
+# =====================
 st.markdown(
     """
     <div style="padding:30px 10px;">
         <h1>🎧 HEARity</h1>
         <p style="color:#b0b0b0;">
-            Konversi Suara ke Teks & Ringkasan Otomatis dengan Whisper + AI Generatif
+             Konversi Suara ke Teks & Ringkasan Otomatis dengan Whisper + AI Generatif
         </p>
         <ul>
             <li>Mengubah file audio atau video menjadi teks tertulis</li>
@@ -151,52 +144,67 @@ st.markdown(
     unsafe_allow_html=True
 )
 
-st.write("### Pilih File Audio atau Video untuk Diproses")
-
-
-# =========================
-# UPLOADER FILE
-# =========================
-uploaded_file = st.file_uploader(
-    "📤 Unggah file audio / video",
-    type=["mp3", "mp4", "wav", "mkv", "m4a"]
+# =====================
+# ANTARMUKA PENGGUNA UTAMA
+# =====================
+# 1. UPLOADER FILE
+file_diunggah = st.file_uploader(
+    "📤 Unggah file audio atau video",
+    type=["wav", "mp3", "mp4", "m4a", "mkv"]
 )
 
+# 2. TOMBOL PROSES
+if file_diunggah:
+    if st.button("Mulai Proses", use_container_width=True):
+        with tempfile.NamedTemporaryFile(delete=False) as sementara:
+            sementara.write(file_diunggah.read())
+            jalur_audio = sementara.name
 
-# =========================
-# TOMBOL PROSES
-# =========================
-if uploaded_file:
-    if st.button("Proses Transkripsi & Ringkasan", type="primary"):
-        try:
-            with st.spinner("🎧 Menyiapkan audio..."):
-                path_awal = simpan_file_sementara(uploaded_file)
-                wav_path = konversi_ke_wav_16k(path_awal)
+        # --- Proses Transkripsi ---
+        with st.spinner("🔊 Sedang mengubah suara menjadi teks..."):
+            hasil = whisper_transcribe(jalur_audio)
 
-            with st.spinner("🔊 Melakukan transkripsi (Whisper)..."):
-                st.session_state.teks_lengkap = whisper_transkripsi(wav_path)
+        if "text" in hasil:
+            st.session_state.teks_lengkap = hasil
+        else:
+            st.session_state.teks_lengkap = " ".join(
+                c["text"] for c in hasil["chunks"]
+            )
 
-            with st.spinner("✍🏻 Membuat ringkasan (Gemini)..."):
-                st.session_state.ringkasan_mentah = gemini_summarize(
-                    st.session_state.teks_lengkap
-                )
+        # --- Proses Ringkasan ---
+        with st.spinner("✍🏻 Sedang membuat ringkasan..."):
+            instruksi = f"""
+Ringkas materi berikut dalam bentuk POIN-POIN PENTING.
 
-            st.session_state.selesai = True
-            st.success("Proses selesai!")
+Aturan:
+- Ikuti alur pembahasan dari awal sampai akhir
+- Cantumkan semua konsep dan topik penting
+- Jelaskan definisi, klasifikasi, dan perbedaan konsep utama jika ada
+- Sertakan tujuan, alasan pentingnya topik, dan implikasinya
+- Gunakan Bahasa Indonesia yang formal dan akademis
+- Jangan menyalin kalimat asli secara mentah
+- Maksimal 10–12 poin penting
+- Jangan gunakan notasi LaTeX
+- Gunakan simbol Unicode matematika jika diperlukan
+MATERI:
+{st.session_state.teks_lengkap}
+"""
+            respon = gemini_summarize(st.session_state.teks_lengkap)
 
-        except Exception as e:
-            st.error(f"Gagal memproses file: {e}")
+            st.session_state.ringkasan_mentah = respon
+
+        st.session_state.selesai = True
 
 
-# =========================
+# =====================
 # TAMPILAN HASIL
-# =========================
+# =====================
 if st.session_state.selesai:
-    # TRANSKRIP
+    # 3. AREA TEKS TRANSCRIPT
     st.subheader("📄 Transkrip Lengkap")
     st.text_area("", st.session_state.teks_lengkap, height=260)
 
-    # RINGKASAN
+    # 4. AREA TEKS RINGKASAN
     st.subheader("📝 Ringkasan Materi")
 
     ringkasan_rapi = []
@@ -208,21 +216,19 @@ if st.session_state.selesai:
 
     st.text_area("", "\n".join(ringkasan_rapi), height=260)
 
-    # UNDUH TXT
-    col1, col2 = st.columns(2)
+    # 5. TOMBOL UNDUH PDF
+    kolom1, kolom2 = st.columns(2)
 
-    with col1:
+    with kolom1:
         st.download_button(
-            "⬇️ Unduh Transkrip (TXT)",
-            st.session_state.teks_lengkap,
-            file_name="transkrip.txt",
+            "⬇️ Unduh Transkrip (PDF)",
+            "file_transkrip",
             use_container_width=True
         )
 
-    with col2:
+    with kolom2:
         st.download_button(
-            "⬇️ Unduh Ringkasan (TXT)",
-            st.session_state.ringkasan_mentah,
-            file_name="ringkasan.txt",
+            "⬇️ Unduh Ringkasan (PDF)",
+            "file_ringkasan",
             use_container_width=True
         )
